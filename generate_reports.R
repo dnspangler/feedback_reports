@@ -11,7 +11,7 @@ library(RDCOMClient)
 
 options(scipen = 999)
 
-## Set report date to the first day of the month 
+## Set report date to the first day of the month of the report to be generated
 report_date = ymd("2023-10-01")
 
 #Number of years of historical data to show in the figures
@@ -86,18 +86,20 @@ if(file.exists(report_data_fn)){
   
   print("no data found, making some up")
   
-  n = 100000
+  n = 10000
+  
+  #Note that this is completely fantastical data, but in the correct format. It's expected for instance that there should be lots of missing and correlated values - this is just so that you can test the functionality of the script.
   
   report_data <- data.frame(
     "month" = floor_date(seq(report_date+months(1)-years(1),report_date+months(1),by = 365/(n))[1:n],unit = "month"), 
     "caseid" = seq(1,n,1), 
     "CallId" = seq(1,n,1), 
     
-    "queue_time" = rlnorm(n,meanlog = 0.8), 
-    "call_time" = rlnorm(n,meanlog = 1.2)*60, 
-    "referral_delay" = rlnorm(n,meanlog = 1.5)*60,
-    "disp_ready_time" = rlnorm(n,meanlog = 1)*10,
-    "age" = round(runif(n,1,100)),
+    "queue_time" = round(rlnorm(n,meanlog = 0.8),2), 
+    "call_time" = round(rlnorm(n,meanlog = 1.2)*60), 
+    "referral_delay" = round(rlnorm(n,meanlog = 1.5)*60),
+    "disp_ready_time" = round(rlnorm(n,meanlog = 1)*10),
+    "age" = round(round(runif(n,1,100))),
     
     "has_close" = as.logical(rbinom(n,1,0.95)), 
     "care_need" = as.logical(rbinom(n,1,0.73)), 
@@ -120,7 +122,7 @@ if(file.exists(report_data_fn)){
   report_data$user_org = ifelse(report_data$name %in% c("testop1","testop2","testop3"),"testregion1","testregion2")
   report_data$call_org = ifelse(report_data$name %in% c("testop1","testop2","testop3"),"testregion1","testregion2")
   
-  
+  write_csv(report_data, report_data_fn)
 }
 
 
@@ -307,14 +309,29 @@ for(i in outnames){
 
 # Generate emails ---------------
 
+user_info_fn <- "user_info.csv"
+
+if(file.exists(user_info_fn)){
+  
+  user_info <- read_csv(user_info_fn)
+  
+}else{
+  
+  print("no user info found, making some up")
+  
+  user_info <- data.frame("name" = unique(report_data$name),
+                          "email" = paste0(unique(report_data$name),"@fakedomain.com")) %>%
+    left_join(distinct(select(report_data,name,user_org)))
+  
+}  
+
 emailnames <-  r_user$name[r_user$month == report_date & r_user$n_cn >= 50]
 
-emails <- left_join(data.frame(name = emailnames),
-                    select(report_data,name,Email,user_org), by = "name") %>%
+emails <- filter(user_info, name %in% emailnames)
 
 # Open Outlook
 Outlook <- COMCreate("Outlook.Application")
-subject <- paste0("SvLC feedback report for ",report_month)
+subject <- paste0("SvLC feedback report for ",month(report_date,label = T,abbr = F))
 body <- paste0("
 Hello!<p>
 
@@ -324,16 +341,16 @@ Cheers,<br>
 Douglas
 ")
 
-for(i in 1:nrow(emails)){
+for(i in 1:nrow(user_info)){
   # Create a new message
   Email = Outlook$CreateItem(0)
 
   # Set the recipient, subject, and body
-  Email[["to"]] = emails$corr[i]
+  Email[["to"]] = emails$email[i]
   Email[["cc"]] = ""
   Email[["bcc"]] = ""
-  Email[["subject"]] = enc2utf8(subject)
-  Email[["bodyformat"]] <- 2
+  Email[["subject"]] = subject
+  #Email[["bodyformat"]] <- 2
   Email[["htmlbody"]] = body
   Email[["attachments"]]$Add(paste0(getwd(),"/",folder,"/",emails$user_org[i],"/",year(report_date),sprintf('%02d',month(report_date)),"_",as_filename(emails$name[i]),".html"))
 
@@ -341,8 +358,4 @@ for(i in 1:nrow(emails)){
   # This will generate mails in outlook, but our permission settings don't allow automatically sending messages via the RDCom API, so have to press send manually.
   Email$Display()
   
-  
-  
 }
-
-#nrow(emails)
