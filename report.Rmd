@@ -1,0 +1,257 @@
+---
+title: "Monthly Feedback report"
+params:
+  name: NA
+  month: NA
+  data: NA
+  data_raw: NA
+output:
+  html_document: default
+---
+<style type="text/css">
+.main-container {
+  max-width: 90%;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+</style>
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(lubridate)
+library(DT)
+library(scales)
+knitr::opts_chunk$set(echo = FALSE,fig.height=2,warning = F,message = F)
+options(scipen = 999)
+
+prios <- c("1"="1A","2"="1B","3"="2A","4"="2B","5"="3","7"="Referral")
+
+priopal = c("1A" = "#FF0000","1B"="#FFA500","2A"="#FFFF00","2B"="#a5ff00","3"="#66CD00","Referral"="#0000FF")
+
+n_min = 50
+
+sec_to_time <- function(x){
+  t <- seconds_to_period(x)
+  sprintf('%02d:%02d', minute(t), second(t))
+}
+
+data <- params$data %>%
+  mutate(me = ifelse(name == params$name,T,F),
+         now = ifelse(month == ymd(params$month),T,F),
+         last = ifelse(month == ymd(params$month)-months(1),T,F),
+         identity = 1) %>%
+  filter(n_cn > n_min | me,
+         month <= ymd(params$month),
+         month > ymd(params$month) - years(1),
+         user_org == first(user_org[me]))
+
+plot_line_graph <- function(d,measure,name,x_name="Month",y_name="Value",base = "n_cn", n_min = 50){
+  
+  meanvals <- d %>%
+    group_by(me) %>%
+    summarise(measure = round(mean(rep(!!sym(measure), times=!!sym(base)),na.rm = T))) %>%
+    pull(measure)
+  
+  n_max <- max(d[[base]],na.rm = T)
+  
+  if(y_name == "Minutes"){
+    meanvals = sec_to_time(meanvals)
+    }
+  
+  plt <- d %>%
+    group_by(month,me) %>%
+    summarise(measure = median(!!sym(measure),na.rm = T),
+              mq1 = quantile(!!sym(measure),na.rm = T)[2],
+              mq3 = quantile(!!sym(measure),na.rm = T)[4],
+              # If weighting is not used (identity), consider the measure itself to be the base n value for alpha calculation
+              n = ifelse(sum(!!sym(base)) == n(),
+                         sum(!!sym(measure)),
+                         sum(!!sym(base)))) %>%
+    group_by(me) %>%
+    mutate(next_n = lag(n)) %>%
+  ggplot(aes(x=as.Date(month), 
+             y=measure, 
+             ymin = mq1,
+             ymax = mq3,
+             alpha = ifelse(me,
+                            rescale(n,c(0.2,1),c(0,n_max)),
+                            0.2),
+             group = me, 
+             label = ifelse(me,round(measure),NA),
+             color = ordered(ifelse(me,
+                                    paste("Me:",meanvals[2]),
+                                    paste("Others:",meanvals[1]))))) +
+  geom_ribbon(color = NA, alpha = 0.2) +
+  geom_line() + 
+  geom_label(show.legend = FALSE) +
+  scale_color_manual(values = c("red","black")) + 
+  scale_alpha(guide = 'none') +
+  scale_x_date(date_minor_breaks = "1 month") +
+  guides(colour = guide_legend(override.aes = list(shape = 21)))+
+  labs(title = paste(name,"Last month:",round(filter(d,now & me)[measure],1)),
+       color = "Whole year",
+       y = y_name,
+       x = x_name)
+  
+  if(y_name == "Minutes"){
+    plt$layers[[3]] <- NULL
+    plt <- plt + 
+      geom_label(aes(label = ifelse(me,sec_to_time(round(measure)),NA)),show.legend = FALSE) +
+      scale_y_time(labels = function(l) strftime(l, '%M:%S')) +
+      labs(title = paste(name,"Last month:",sec_to_time(round(filter(d,now & me)[measure]))))
+  }
+  return(plt)
+  
+}
+
+plot_dens_graph <- function(d,measure,name){
+  d %>%
+  filter(now) %>%
+  ggplot(aes(x = !!as.symbol(measure))) +
+    geom_density() +
+    geom_vline(xintercept = as.numeric(select(filter(d,now,me),!!as.symbol(measure))),color = "red") +
+    geom_vline(xintercept = as.numeric(select(filter(d,last,me),!!as.symbol(measure))),color = "red", alpha = 0.2)
+}
+
+plot_funnel_graph <- function(d,measure,n,name){
+  d %>%
+  filter(now) %>%
+    ggplot(aes(x=!!as.symbol(n), 
+               y=!!as.symbol(measure), 
+               alpha = ifelse(me,1,0.2),
+               group = name, 
+               color = ifelse(me,"red","black"))) +
+    geom_point() + 
+    scale_color_identity() + 
+    theme(legend.position = "none") +
+    labs(title = measure)
+}
+
+```
+
+The analysis below reports data for `r params$name` during `r paste(month(report_date,label = T),year(report_date))`, together with one year of historical data. Parameters are reported in comparison with the median value for all other call-takers in the region (an interval which covers 50% of all call-takers vaues are denoted by the shaded area). The reliability of the value is reflected by the transparancy of the values, with metrics based on fewer cases being more transparent.
+
+Cohorts refered to in the report include incidents with a __care need__ ,(close reason = Ambulance need, No Ambulance need, Light-care ambulance), and __patient care__ (care need per above as well as being single patient calls assessed with the CDSS). note that the quality of the data may be impacted by missing data, including  __`r round((1-filter(data,me,now)$n_has_close/filter(data,me,now)$n_total)*100)`%__ of incident mising a close reason, __`r round((1-filter(data,me,now)$n_matched_call/filter(data,me,now)$n_total)*100)`%__ incidents missing a link to an incoming phone call, and __`r round((1-filter(data,me,now)$n_pc_pnr/filter(data,me,now)$n_pc)*100)`%__ of patient care incidents missing a valid personal idntification number.
+
+The statistics are reported in two parts. The first __descriptive__ part includes measures where high or low values are not considered good or bad. The second part reports __quality measures__ where it is desireable to have a high or low value. Finally, a __table__ of individual incidents is provided where you can review data about your individual calls.
+
+If you have questions or requests regarding the contents of the reports, or to report incorrect data, please contact douglas.spangler@akademiska.se.
+
+# Descriptive data
+```{r volym}
+plot_line_graph(data,"n_cn","Number of calls with care need",y_name = "Number",base = "identity")
+```
+<br>
+Total number of cases with care need per month
+<br><br><br><br>
+```{r pct_hanv}
+plot_line_graph(data,"pct_cn_referral","Percent referred",y_name = "Percent",base = "n_cn")
+```
+<br>
+Proportion of all incidents involving a medical problem who did not receive an ambulance response.
+<br><br><br><br>
+```{r pct p1}
+plot_line_graph(data,"pct_cn_p1","Percent priority 1",y_name = "Percent",base = "n_cn")
+```
+<br>
+Proportion of all incidents  involving a medical problem receiving a priority 1 (lights and sirens) response.
+<br><br><br><br>
+```{r Samtalstid}
+plot_line_graph(data,"median_call_time","Median call time",y_name = "Minutes",base = "n_matched_call")
+```
+<br>
+Median time from answering to ending the first call associated with all incidents.
+<br><br><br><br>
+```{r prio_up}
+plot_line_graph(data,"pct_pc_mbs_up","Percent manually upgraded patients",y_name = "Percent",base = "n_pc")
+```
+<br>
+Proportion of all single patient incidents where the response priority was higher than that suggested by the CDSS.
+<br><br><br><br>
+```{r prio_ner}
+plot_line_graph(data,"pct_pc_mbs_down","Percent manually downgraded patients",y_name = "Percent",base = "n_pc")
+```
+<br>
+Proportion of all single patient incidents where the response priority was lower than that suggested by the CDSS.
+<br><br><br><br>
+```{r cats,fig.height=4,fig.width = 10}
+params$data_raw %>%
+  group_by(`Call type`,`Chosen priority`) %>%
+  summarise(Count = n()) %>%
+  group_by(`Call type`) %>%
+  mutate(n_tot = sum(Count)) %>%
+  ggplot(aes(x=reorder(`Call type`,-n_tot),y=Count,fill=`Chosen priority`)) +
+  geom_bar(position="stack", stat="identity") +
+  scale_fill_manual(values = priopal) +
+  theme(axis.text.x = element_text(angle= -45,hjust = 0)) +
+  labs(title = "Number of incidents with care need per call type/priority in the last month", x="")
+```
+
+<br><br><br><br>
+
+# Quality meaures
+
+```{r Percentdba}
+plot_line_graph(data,"pct_pc_dba","Percent patients with life threat questions",y_name = "Percent",base = "n_pc")
+```
+<br>
+Proportion of single patient incidents with initial questions intended to exclude life threatening conditions completed (Breathing/Airway clear/Conscious).
+<br><br><br><br>
+```{r Percentsokorsak}
+plot_line_graph(data,"pct_pc_cat","Percent patients with contact reason",y_name = "Percent",base = "n_pc")
+```
+<br>
+Proportion of single patient incidents with a documented reason for contact in the CDSS.
+<br><br><br><br>
+```{r Percentkomplett}
+plot_line_graph(data,"pct_pc_complete","Percent patients with complete journal",y_name = "Percent",base = "n_pc")
+```
+
+<br>
+Proportion of single patient incidents in which all parts of the CDSS was completed.
+<br><br><br><br>
+```{r svarstid}
+plot_line_graph(data,"median_queue_time","Median queue time",y_name = "Minutes",base = "n_matched_call")
+```
+
+<br>
+Median time from receipt of call at the EMD center to answering the first call associated with all incidents.
+<br><br><br><br>
+```{r larmtid1a}
+plot_line_graph(data,"median_p1a_ready_time","Median dispatch time priority 1A
+",y_name = "Minutes",base = "n_p1a")
+```
+<br>
+Median time from answering the call to the first of: Marking the call as ready for dispatch, connecting a dispatcher to the call to handle ambulance dispatch, actual ambulance dispatch for Priority 1A (immediately life threatening) incidents.
+<br><br><br><br>
+```{r larmtid1b}
+plot_line_graph(data,"median_p1b_ready_time","Median dispatch time priority 1B",y_name = "Minutes",base = "n_p1b")
+```
+<br>
+Same as above for priority 1B (Emergency, non-life threatening) incidents.
+<br><br><br><br>
+```{r prio ut-in}
+plot_line_graph(data,"pct_p2out_p1in","Percent priority 2 patients transported priority 1",y_name = "Percent",base = "n_p2")
+```
+<br>
+Proportion of incidents dispatched as priority 2A or B which were subsequently transported by the ambulance on scene to a hospital with lights and sirens. A measure of under-triage.
+<br><br><br><br>
+```{r prio_ut-vpp}
+plot_line_graph(data,"pct_p1out_vpp","Percent priority 1 patients not transported (with exceptions)",y_name = "Percent",base = "n_p1")
+```
+<br>
+Proportion of incidents dispatched as priority 1A or B which were treated on scene and not transported to a hospital (excluding call types considered to be appropriately treatable on scene: Cardiac Arrest, Allergic reaction, Low blood sugar, Breathing difficulty in children 5 or under). A measure of over-triage.
+<br><br><br><br>
+```{r hanv}
+plot_line_graph(data,"pct_pc_referral_72txp","Percent referred patients transported within 72hrs",y_name = "Percent",base = "n_pc_referral")
+```
+<br>
+Proportion of single patient incidents referred to non-ambulance care where the patient subsequently re-contacted the EMD center within 72 hours and was transported to the hospital. A measure of under-triage.
+<br><br><br><br>
+
+# Last months incidents:
+```{r raw}
+datatable(params$data_raw,rownames = F,options = list(autoWidth = TRUE))
+```
