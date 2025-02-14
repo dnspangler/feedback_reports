@@ -8,8 +8,8 @@ Sourcing `generate_reports.r` will parse `report_data.csv` and generate a folder
 
 If you use this work in research, plase cite our study:
 
-Spangler DN, Blomberg H. 
-Continuous individual feedback to nurses at emergency medical dispatch centres: a stepped-wedge, interrupted time series analysis. 
-BMJ Open Qual. 2025 Jan 30;14(1):e002993. doi: 10.1136/bmjoq-2024-002993.
+Spangler DN, Blomberg H.  
+Continuous individual feedback to nurses at emergency medical dispatch centres: a stepped-wedge, interrupted time series analysis.  
+BMJ Open Qual. 2025 Jan 30;14(1):e002993. doi: 10.1136/bmjoq-2024-002993.  
 
 Thank you!
